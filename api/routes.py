@@ -6,6 +6,7 @@ import os
 import uuid
 import tempfile
 from datetime import datetime
+from agents.jd_agent import process_job_description
 
 from agents.parser_agent import parse_resume
 from agents.normalizer_agent import normalize_skills, TAXONOMY
@@ -30,13 +31,19 @@ def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)
 # In-memory storage
 candidates = {}
 batch_jobs = {}
-
+jobs = {}
 # ============= Models =============
 
 class MatchRequest(BaseModel):
     candidate_id: str
     job_description: str = Field(..., min_length=10)
-
+class JobInput(BaseModel):
+    title: Optional[str] = ""
+    description: str = Field(..., min_length=10)
+    skills: List[str] = []   # admin-specified skills
+class MatchJobRequest(BaseModel):
+    candidate_id: str
+    job_id: str
 # ============= API Endpoints =============
 
 @app.post("/api/v1/parse")
@@ -188,7 +195,59 @@ async def batch_parse_resumes(
         "total_files": len(files),
         "message": "Batch processing started"
     }
+@app.post("/api/v1/jobs")
+async def create_job(job: JobInput, api_key: str = Depends(verify_api_key)):
+    """Admin submits a job description. Skills are extracted + normalized automatically."""
+    job_id = str(uuid.uuid4())
 
+    # Run JD through the agent pipeline
+    processed = process_job_description(job.description, job.skills or [])
+
+    jobs[job_id] = {
+        "job_id": job_id,
+        "title": job.title or processed.get("role_title", ""),
+        "created_at": datetime.now().isoformat(),
+        **processed   # merges all structured fields in
+    }
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "role_title": jobs[job_id]["title"],
+        "role_summary": processed.get("role_summary", ""),
+        "required_skills": processed["required_skills"],
+        "nice_to_have_skills": processed["nice_to_have_skills"],
+        "unknown_skills": processed.get("unknown_skills", []),
+        "skill_categories": processed.get("skill_categories", {}),
+        "message": "Job created and skills normalized successfully"
+    }
+@app.get("/api/v1/jobs/{job_id}")
+async def get_job(job_id: str, api_key: str = Depends(verify_api_key)):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return jobs[job_id]
+@app.post("/api/v1/match/job")
+async def match_with_job(req: MatchJobRequest, api_key: str = Depends(verify_api_key)):
+    
+    if req.candidate_id not in candidates:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    if req.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[req.job_id]
+
+    result = match_candidate_to_job(
+        candidates[req.candidate_id],
+        job["description"]
+    )
+
+    return {
+        "job_id": req.job_id,
+        "candidate_id": req.candidate_id,
+        "match_result": result
+    }
 @app.get("/api/v1/batch/{batch_id}/status")
 async def get_batch_status(batch_id: str, api_key: str = Depends(verify_api_key)):
     """Get batch processing status"""
