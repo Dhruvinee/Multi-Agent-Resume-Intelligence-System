@@ -1,0 +1,38 @@
+# Core
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-dotenv==1.0.0
+python-multipart==0.0.6
+
+# LLM & Agents
+langchain==0.1.0
+langchain-google-genai==1.0.0
+
+# Document Parsing
+pdfplumber==0.10.3
+PyMuPDF==1.23.8
+python-docx==1.1.0
+
+# ML & Embeddings
+sentence-transformers==2.2.2
+chromadb==0.4.22
+numpy==1.24.3
+scikit-learn==1.3.2
+
+# Cache & Queue
+redis==5.0.1
+
+# Auth & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Utils
+pydantic==2.5.0
+pydantic-settings==2.1.0
+httpx==0.25.1
+tenacity==8.2.3
+loguru==0.7.2
+
+# Optional: For better performance
+# tiktoken==0.5.1
+# pandas==2.1.3
