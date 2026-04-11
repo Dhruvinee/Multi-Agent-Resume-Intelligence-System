@@ -1,556 +1,838 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
 
-// API Configuration
 const API_BASE_URL = 'http://localhost:8000';
 const API_KEY = 'test-api-key';
 
-// Configure axios defaults
-axios.defaults.baseURL = API_BASE_URL;
-axios.defaults.headers.common['Authorization'] = `Bearer ${API_KEY}`;
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: { Authorization: `Bearer ${API_KEY}` },
+});
 
-function App() {
-  const [activeTab, setActiveTab] = useState('company'); // 'company', 'resume', 'match'
+// ─── Toast notification system ───────────────────────────────────────────────
+function Toast({ toasts, onDismiss }) {
+  return (
+    <div className="toast-container">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast toast--${t.type}`}>
+          <span className="toast__icon">
+            {t.type === 'success' ? '✓' : t.type === 'error' ? '✕' : 'ℹ'}
+          </span>
+          <span className="toast__msg">{t.message}</span>
+          <button className="toast__close" onClick={() => onDismiss(t.id)}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Skill tag component ──────────────────────────────────────────────────────
+function SkillTag({ label, variant = 'default' }) {
+  return <span className={`skill-tag skill-tag--${variant}`}>{label}</span>;
+}
+
+// ─── Score ring SVG ───────────────────────────────────────────────────────────
+function ScoreRing({ score }) {
+  const r = 52;
+  const circ = 2 * Math.PI * r;
+  const fill = (score / 100) * circ;
+  const color =
+    score >= 80 ? 'var(--c-teal)' : score >= 60 ? 'var(--c-amber)' : score >= 40 ? 'var(--c-coral)' : 'var(--c-red)';
+  const label =
+    score >= 80 ? 'Strong Match' : score >= 60 ? 'Good Match' : score >= 40 ? 'Potential' : 'Weak Match';
+
+  return (
+    <div className="score-ring-wrap">
+      <svg viewBox="0 0 120 120" className="score-ring">
+        <circle cx="60" cy="60" r={r} className="score-ring__bg" />
+        <circle
+          cx="60" cy="60" r={r}
+          className="score-ring__fill"
+          stroke={color}
+          strokeDasharray={`${fill} ${circ}`}
+          strokeDashoffset={circ / 4}
+        />
+        <text x="60" y="56" textAnchor="middle" className="score-ring__num">{Math.round(score)}</text>
+        <text x="60" y="72" textAnchor="middle" className="score-ring__pct">/ 100</text>
+      </svg>
+      <p className="score-ring__label" style={{ color }}>{label}</p>
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+export default function App() {
+  const [tab, setTab] = useState('jobs');
   const [loading, setLoading] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState('Processing…');
+  const [toasts, setToasts] = useState([]);
+
+  // Data
   const [candidates, setCandidates] = useState([]);
   const [jobs, setJobs] = useState([]);
-  const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [selectedJob, setSelectedJob] = useState(null);
-  const [matchResults, setMatchResults] = useState(null);
-  
-  // Company form states
-  const [companySkills, setCompanySkills] = useState('');
+  const [matchResult, setMatchResult] = useState(null);
+  const [parsedCandidate, setParsedCandidate] = useState(null);
+  const [createdJob, setCreatedJob] = useState(null);
+
+  // Job form
   const [jobTitle, setJobTitle] = useState('');
-  const [jobDescription, setJobDescription] = useState('');
-  const [minExperience, setMinExperience] = useState('');
-  const [educationLevel, setEducationLevel] = useState('');
-  const [extractedSkills, setExtractedSkills] = useState(null);
-  
-  // Resume upload states
-  const [uploadedFile, setUploadedFile] = useState(null);
+  const [jobDesc, setJobDesc] = useState('');
+  const [adminSkills, setAdminSkills] = useState('');
+
+  // Resume upload
+  const [uploadFile, setUploadFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  
-  // Fetch candidates on load
-  useEffect(() => {
-    fetchCandidates();
-    fetchJobs();
+  const [dragOver, setDragOver] = useState(false);
+
+  // Match tab
+  const [selCandidate, setSelCandidate] = useState('');
+  const [selJob, setSelJob] = useState('');
+
+  // ── Toasts ──────────────────────────────────────────────────────────────────
+  const addToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToasts((t) => [...t, { id, message, type }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
   }, []);
-  
-  const fetchCandidates = async () => {
-    try {
-      // Note: You might need to add a GET /candidates endpoint
-      const response = await axios.get('/api/v1/candidates');
-      setCandidates(Object.values(response.data));
-    } catch (error) {
-      console.error('Error fetching candidates:', error);
-    }
-  };
-  
-  const fetchJobs = async () => {
-    try {
-      const response = await axios.get('/api/v1/company/jobs');
-      setJobs(response.data.jobs || []);
-    } catch (error) {
-      console.error('Error fetching jobs:', error);
-    }
-  };
-  
-  // Extract skills from company text
-  const handleExtractSkills = async () => {
-    setLoading(true);
-    try {
-      const response = await axios.post('/api/v1/company/extract-skills', {
-        skills_text: companySkills,
-        context: jobTitle || 'Job Requirement'
-      });
-      setExtractedSkills(response.data);
-      alert(`Extracted ${response.data.total_skills_found} skills successfully!`);
-    } catch (error) {
-      console.error('Error extracting skills:', error);
-      alert('Error extracting skills: ' + (error.response?.data?.detail || error.message));
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  // Create job requirements
+  const dismissToast = (id) => setToasts((t) => t.filter((x) => x.id !== id));
+
+  // ── Data loaders ─────────────────────────────────────────────────────────────
+  const loadCandidates = useCallback(async () => {
+    // Backend has no list endpoint — we keep a local registry
+    // populated after each successful parse. Nothing to fetch on mount.
+  }, []);
+
+  const loadJobs = useCallback(async () => {
+    // Same — jobs are returned from POST and stored locally
+  }, []);
+
+  useEffect(() => {
+    loadCandidates();
+    loadJobs();
+  }, [loadCandidates, loadJobs]);
+
+  // ── Create Job ───────────────────────────────────────────────────────────────
   const handleCreateJob = async () => {
-    if (!jobTitle || !jobDescription) {
-      alert('Please fill in job title and description');
+    if (!jobDesc.trim() || jobDesc.trim().length < 10) {
+      addToast('Job description must be at least 10 characters.', 'error');
       return;
     }
-    
     setLoading(true);
+    setLoadingMsg('Extracting and normalizing skills from your job description…');
     try {
-      const response = await axios.post('/api/v1/company/job-requirements', {
-        job_title: jobTitle,
-        job_description: jobDescription,
-        min_experience_years: minExperience ? parseFloat(minExperience) : null,
-        education_level: educationLevel || null,
-        department: 'Engineering'
+      const skillsList = adminSkills
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const { data } = await api.post('/api/v1/jobs', {
+        title: jobTitle || undefined,
+        description: jobDesc,
+        skills: skillsList,
       });
-      alert('Job created successfully!');
-      fetchJobs();
-      // Clear form
+
+      const newJob = {
+        job_id: data.job_id,
+        title: data.role_title || jobTitle || 'Untitled Role',
+        required_skills: data.required_skills,
+        nice_to_have_skills: data.nice_to_have_skills,
+        unknown_skills: data.unknown_skills,
+        skill_categories: data.skill_categories,
+        role_summary: data.role_summary,
+        description: jobDesc,
+        created_at: new Date().toISOString(),
+      };
+
+      setJobs((prev) => [newJob, ...prev]);
+      setCreatedJob(newJob);
+      addToast(`Job "${newJob.title}" created successfully!`, 'success');
+
       setJobTitle('');
-      setJobDescription('');
-      setMinExperience('');
-      setEducationLevel('');
-      setCompanySkills('');
-      setExtractedSkills(null);
-    } catch (error) {
-      console.error('Error creating job:', error);
-      alert('Error creating job: ' + (error.response?.data?.detail || error.message));
+      setJobDesc('');
+      setAdminSkills('');
+    } catch (err) {
+      addToast(err.response?.data?.detail || err.message, 'error');
     } finally {
       setLoading(false);
     }
   };
-  
-  // Upload and parse resume
-  const handleUploadResume = async () => {
-    if (!uploadedFile) {
-      alert('Please select a file first');
+
+  // ── Upload Resume ─────────────────────────────────────────────────────────────
+  const handleUpload = async (file) => {
+    if (!file) return;
+    const allowed = ['.pdf', '.docx', '.txt'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) {
+      addToast(`Unsupported file type. Allowed: ${allowed.join(', ')}`, 'error');
       return;
     }
-    
+
     setLoading(true);
+    setLoadingMsg('Parsing resume with AI agents…');
     setUploadProgress(0);
-    
-    const formData = new FormData();
-    formData.append('file', uploadedFile);
-    
+
+    const fd = new FormData();
+    fd.append('file', file);
+
     try {
-      const response = await axios.post('/api/v1/parse', formData, {
+      const { data } = await api.post('/api/v1/parse', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(percentCompleted);
-        }
+        onUploadProgress: (e) => {
+          setUploadProgress(Math.round((e.loaded * 100) / e.total));
+        },
       });
-      
-      alert('Resume parsed successfully!');
-      setUploadedFile(null);
+
+      const candidate = {
+        ...data.data,
+        candidate_id: data.candidate_id,
+      };
+
+      setCandidates((prev) => {
+        const exists = prev.find((c) => c.candidate_id === data.candidate_id);
+        return exists ? prev : [candidate, ...prev];
+      });
+      setParsedCandidate(candidate);
+      setUploadFile(null);
       setUploadProgress(0);
-      fetchCandidates();
-      
-      // Show parsed data
-      console.log('Parsed resume:', response.data);
-    } catch (error) {
-      console.error('Error uploading resume:', error);
-      alert('Error uploading resume: ' + (error.response?.data?.detail || error.message));
+      addToast(`Parsed "${candidate.name || file.name}" successfully!`, 'success');
+    } catch (err) {
+      addToast(err.response?.data?.detail || err.message, 'error');
     } finally {
       setLoading(false);
     }
   };
-  
-  // Match candidate with job
-  const handleMatchCandidate = async () => {
-    if (!selectedCandidate || !selectedJob) {
-      alert('Please select both a candidate and a job');
+
+  const handleFileDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) { setUploadFile(file); handleUpload(file); }
+  };
+
+  // ── Match ─────────────────────────────────────────────────────────────────────
+  const handleMatch = async () => {
+    if (!selCandidate || !selJob) {
+      addToast('Select both a candidate and a job first.', 'error');
       return;
     }
-    
     setLoading(true);
+    setLoadingMsg('Running semantic skill matching…');
     try {
-      // First get the job requirements
-      const jobData = jobs.find(j => j.job_id === selectedJob);
-      
-      const response = await axios.post(`/api/v1/company/match-candidate?candidate_id=${selectedCandidate}`, {
-        job_title: jobData.job_title,
-        job_description: jobData.original_description,
-        min_experience_years: jobData.requirements.min_experience_years,
-        education_level: jobData.requirements.education_level
+      const { data } = await api.post('/api/v1/match/job', {
+        candidate_id: selCandidate,
+        job_id: selJob,
       });
-      
-      setMatchResults(response.data.match_result);
-      alert('Matching completed!');
-    } catch (error) {
-      console.error('Error matching:', error);
-      alert('Error matching: ' + (error.response?.data?.detail || error.message));
+      setMatchResult(data.match_result);
+      addToast('Matching complete!', 'success');
+    } catch (err) {
+      addToast(err.response?.data?.detail || err.message, 'error');
     } finally {
       setLoading(false);
     }
   };
-  
-  // Quick match with skills text
-  const handleQuickMatch = async (skillsText) => {
-    if (!selectedCandidate) {
-      alert('Please select a candidate first');
-      return;
-    }
-    
-    setLoading(true);
-    try {
-      const response = await axios.post(`/api/v1/company/match-from-text`, null, {
-        params: {
-          candidate_id: selectedCandidate,
-          skills_text: skillsText,
-          job_context: 'Quick Match'
-        }
-      });
-      
-      setMatchResults(response.data.match_result);
-      alert('Quick match completed!');
-    } catch (error) {
-      console.error('Error in quick match:', error);
-      alert('Error in quick match: ' + (error.response?.data?.detail || error.message));
-    } finally {
-      setLoading(false);
-    }
-  };
-  
+
+  // ─────────────────────────────────────────────────────────────────────────────
   return (
-    <div className="App">
-      <header className="header">
-        <h1>🤖 Multi-Agent Resume Intelligence System</h1>
-        <p>AI-Powered Resume Parsing & Skill Matching</p>
-      </header>
-      
-      <div className="tabs">
-        <button 
-          className={activeTab === 'company' ? 'tab active' : 'tab'} 
-          onClick={() => setActiveTab('company')}
-        >
-          🏢 Company Portal
-        </button>
-        <button 
-          className={activeTab === 'resume' ? 'tab active' : 'tab'} 
-          onClick={() => setActiveTab('resume')}
-        >
-          📄 Resume Upload
-        </button>
-        <button 
-          className={activeTab === 'match' ? 'tab active' : 'tab'} 
-          onClick={() => setActiveTab('match')}
-        >
-          🎯 Candidate Matching
-        </button>
-      </div>
-      
-      {/* Company Portal Tab */}
-      {activeTab === 'company' && (
-        <div className="tab-content">
-          <div className="card">
-            <h2>📝 Enter Job Requirements</h2>
-            
-            <div className="form-group">
-              <label>Job Title *</label>
-              <input
-                type="text"
-                placeholder="e.g., Senior Python Developer"
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-              />
+    <div className="app">
+      <Toast toasts={toasts} onDismiss={dismissToast} />
+
+      {/* Header */}
+      <header className="app-header">
+        <div className="app-header__inner">
+          <div className="app-header__brand">
+            <div className="brand-icon">
+              <svg viewBox="0 0 32 32" fill="none">
+                <rect width="32" height="32" rx="8" fill="currentColor" className="brand-icon__bg" />
+                <path d="M8 24L14 10L20 18L24 14" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="24" cy="14" r="2.5" fill="white" />
+              </svg>
             </div>
-            
-            <div className="form-group">
-              <label>Skills Text (comma-separated or paragraph)</label>
-              <textarea
-                rows="4"
-                placeholder="e.g., Python, Machine Learning, SQL, AWS, Docker, Kubernetes&#10;&#10;Or paste job description paragraph here..."
-                value={companySkills}
-                onChange={(e) => setCompanySkills(e.target.value)}
-              />
-              <button 
-                onClick={handleExtractSkills} 
-                disabled={!companySkills || loading}
-                className="btn-secondary"
+            <div>
+              <h1 className="app-header__title">ResumeIQ</h1>
+              <p className="app-header__sub">Multi-Agent Hiring Intelligence</p>
+            </div>
+          </div>
+
+          <nav className="app-nav">
+            {[
+              { id: 'jobs', label: 'Post a Job' },
+              { id: 'resume', label: 'Parse Resume' },
+              { id: 'match', label: 'Match' },
+            ].map(({ id, label }) => (
+              <button
+                key={id}
+                className={`nav-btn${tab === id ? ' nav-btn--active' : ''}`}
+                onClick={() => setTab(id)}
               >
-                🔍 Extract Skills
-              </button>
-            </div>
-            
-            {extractedSkills && (
-              <div className="skills-preview">
-                <h3>✅ Extracted Skills ({extractedSkills.total_skills_found})</h3>
-                <div className="skills-list">
-                  {extractedSkills.extracted_skills.map((skill, idx) => (
-                    <span key={idx} className="skill-tag">{skill}</span>
-                  ))}
-                </div>
-                {extractedSkills.normalized_skills.length > 0 && (
-                  <>
-                    <h4>📚 Normalized Skills:</h4>
-                    <div className="skills-list">
-                      {extractedSkills.normalized_skills.map((skill, idx) => (
-                        <span key={idx} className="skill-tag normalized">
-                          {skill.canonical}
-                        </span>
-                      ))}
-                    </div>
-                  </>
+                {label}
+                {id === 'resume' && candidates.length > 0 && (
+                  <span className="nav-badge">{candidates.length}</span>
                 )}
-              </div>
-            )}
-            
-            <div className="form-group">
-              <label>Full Job Description *</label>
-              <textarea
-                rows="6"
-                placeholder="Paste complete job description here..."
-                value={jobDescription}
-                onChange={(e) => setJobDescription(e.target.value)}
-              />
-            </div>
-            
-            <div className="form-row">
-              <div className="form-group">
-                <label>Minimum Experience (years)</label>
-                <input
-                  type="number"
-                  placeholder="e.g., 3"
-                  value={minExperience}
-                  onChange={(e) => setMinExperience(e.target.value)}
-                />
-              </div>
-              
-              <div className="form-group">
-                <label>Education Level</label>
-                <select value={educationLevel} onChange={(e) => setEducationLevel(e.target.value)}>
-                  <option value="">Not specified</option>
-                  <option value="Bachelor's">Bachelor's Degree</option>
-                  <option value="Master's">Master's Degree</option>
-                  <option value="PhD">PhD</option>
-                  <option value="Associate">Associate Degree</option>
-                </select>
-              </div>
-            </div>
-            
-            <button 
-              onClick={handleCreateJob} 
-              disabled={!jobTitle || !jobDescription || loading}
-              className="btn-primary"
-            >
-              {loading ? 'Creating...' : '✨ Create Job Requirements'}
-            </button>
-          </div>
-          
-          {/* List Created Jobs */}
-          {jobs.length > 0 && (
-            <div className="card">
-              <h2>📋 Created Jobs ({jobs.length})</h2>
-              <div className="jobs-list">
-                {jobs.map(job => (
-                  <div key={job.job_id} className="job-item">
-                    <div>
-                      <strong>{job.job_title}</strong>
-                      <span className="job-date">{new Date(job.created_at).toLocaleDateString()}</span>
-                    </div>
-                    <div className="job-meta">
-                      <span>🎯 {job.required_skills_count} skills required</span>
-                      {job.department && <span>🏢 {job.department}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* Resume Upload Tab */}
-      {activeTab === 'resume' && (
-        <div className="tab-content">
-          <div className="card">
-            <h2>📄 Upload Resume</h2>
-            <p className="info-text">Supported formats: PDF, DOCX, TXT</p>
-            
-            <div className="upload-area">
-              <input
-                type="file"
-                id="resume-file"
-                accept=".pdf,.docx,.txt"
-                onChange={(e) => setUploadedFile(e.target.files[0])}
-                style={{ display: 'none' }}
-              />
-              <label htmlFor="resume-file" className="upload-label">
-                {uploadedFile ? uploadedFile.name : 'Click to select file'}
-              </label>
-              
-              {uploadProgress > 0 && (
-                <div className="progress-bar">
-                  <div className="progress-fill" style={{ width: `${uploadProgress}%` }}>
-                    {uploadProgress}%
-                  </div>
-                </div>
-              )}
-              
-              <button 
-                onClick={handleUploadResume} 
-                disabled={!uploadedFile || loading}
-                className="btn-primary"
-              >
-                {loading ? 'Processing...' : '🚀 Parse Resume'}
+                {id === 'jobs' && jobs.length > 0 && (
+                  <span className="nav-badge">{jobs.length}</span>
+                )}
               </button>
-            </div>
-          </div>
-          
-          {/* List Parsed Candidates */}
-          {candidates.length > 0 && (
-            <div className="card">
-              <h2>📊 Parsed Candidates ({candidates.length})</h2>
-              <div className="candidates-grid">
-                {candidates.map(candidate => (
-                  <div key={candidate.candidate_id} className="candidate-card">
-                    <h3>{candidate.name || 'Unknown Name'}</h3>
-                    <p>📧 {candidate.email || 'No email'}</p>
-                    <p>💼 Experience: {candidate.years_of_experience || 0} years</p>
-                    {candidate.skills && (
-                      <div>
-                        <strong>Skills:</strong>
-                        <div className="skills-list small">
-                          {candidate.skills.slice(0, 5).map((skill, idx) => (
-                            <span key={idx} className="skill-tag small">{skill}</span>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      <main className="app-main">
+
+        {/* ── JOBS TAB ───────────────────────────────────────────────────────── */}
+        {tab === 'jobs' && (
+          <div className="tab-view">
+            <div className="tab-view__split">
+              {/* Form panel */}
+              <div className="panel">
+                <div className="panel__head">
+                  <h2 className="panel__title">Create Job Posting</h2>
+                  <p className="panel__sub">AI will extract and normalize required skills from your description.</p>
+                </div>
+
+                <div className="field">
+                  <label className="field__label">Job Title <span className="field__opt">(optional)</span></label>
+                  <input
+                    className="field__input"
+                    type="text"
+                    placeholder="e.g. Senior Backend Engineer"
+                    value={jobTitle}
+                    onChange={(e) => setJobTitle(e.target.value)}
+                  />
+                </div>
+
+                <div className="field">
+                  <label className="field__label">Job Description <span className="field__req">*</span></label>
+                  <textarea
+                    className="field__textarea"
+                    rows={8}
+                    placeholder="Paste or type the full job description here…"
+                    value={jobDesc}
+                    onChange={(e) => setJobDesc(e.target.value)}
+                  />
+                  <p className="field__hint">{jobDesc.length} / 4000 chars</p>
+                </div>
+
+                <div className="field">
+                  <label className="field__label">Supplementary Skills <span className="field__opt">(optional)</span></label>
+                  <input
+                    className="field__input"
+                    type="text"
+                    placeholder="Python, Docker, PostgreSQL  (comma-separated)"
+                    value={adminSkills}
+                    onChange={(e) => setAdminSkills(e.target.value)}
+                  />
+                  <p className="field__hint">Added directly to required skills — useful if the JD is sparse.</p>
+                </div>
+
+                <button
+                  className="btn btn--primary btn--full"
+                  onClick={handleCreateJob}
+                  disabled={loading || jobDesc.trim().length < 10}
+                >
+                  {loading ? <span className="btn__spinner" /> : null}
+                  {loading ? 'Processing…' : 'Create Job Posting'}
+                </button>
+              </div>
+
+              {/* Result / job list panel */}
+              <div className="panel">
+                {createdJob ? (
+                  <>
+                    <div className="panel__head">
+                      <h2 className="panel__title">Job Created</h2>
+                      <span className="badge badge--success">Live</span>
+                    </div>
+
+                    <div className="info-block">
+                      <p className="info-block__role">{createdJob.title}</p>
+                      {createdJob.role_summary && (
+                        <p className="info-block__summary">{createdJob.role_summary}</p>
+                      )}
+                      <p className="info-block__id">ID: {createdJob.job_id}</p>
+                    </div>
+
+                    {createdJob.required_skills?.length > 0 && (
+                      <div className="skills-section">
+                        <p className="skills-section__label">Required Skills ({createdJob.required_skills.length})</p>
+                        <div className="skills-wrap">
+                          {createdJob.required_skills.map((s) => (
+                            <SkillTag key={s} label={s} variant="required" />
                           ))}
-                          {candidate.skills.length > 5 && <span>+{candidate.skills.length - 5} more</span>}
                         </div>
                       </div>
                     )}
+
+                    {createdJob.nice_to_have_skills?.length > 0 && (
+                      <div className="skills-section">
+                        <p className="skills-section__label">Nice to Have ({createdJob.nice_to_have_skills.length})</p>
+                        <div className="skills-wrap">
+                          {createdJob.nice_to_have_skills.map((s) => (
+                            <SkillTag key={s} label={s} variant="optional" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {createdJob.unknown_skills?.length > 0 && (
+                      <div className="skills-section">
+                        <p className="skills-section__label">Unrecognized Skills</p>
+                        <div className="skills-wrap">
+                          {createdJob.unknown_skills.map((s) => (
+                            <SkillTag key={s} label={s} variant="unknown" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {createdJob.skill_categories && Object.keys(createdJob.skill_categories).length > 0 && (
+                      <div className="category-grid">
+                        {Object.entries(createdJob.skill_categories).map(([cat, skills]) => (
+                          <div key={cat} className="category-card">
+                            <p className="category-card__name">{cat}</p>
+                            <p className="category-card__count">{skills.length} skill{skills.length !== 1 ? 's' : ''}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="empty-state">
+                    <div className="empty-state__icon">
+                      <svg viewBox="0 0 48 48" fill="none">
+                        <rect x="8" y="6" width="32" height="36" rx="4" stroke="currentColor" strokeWidth="2" />
+                        <line x1="16" y1="16" x2="32" y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="16" y1="22" x2="32" y2="22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="16" y1="28" x2="24" y2="28" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                    </div>
+                    <p className="empty-state__title">No job created yet</p>
+                    <p className="empty-state__sub">Fill in the form and click "Create Job Posting"</p>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* Candidate Matching Tab */}
-      {activeTab === 'match' && (
-        <div className="tab-content">
-          <div className="card">
-            <h2>🎯 Match Candidates with Jobs</h2>
-            
-            <div className="form-row">
-              <div className="form-group">
-                <label>Select Candidate</label>
-                <select 
-                  value={selectedCandidate || ''} 
-                  onChange={(e) => setSelectedCandidate(e.target.value)}
-                >
-                  <option value="">Choose a candidate...</option>
-                  {candidates.map(candidate => (
-                    <option key={candidate.candidate_id} value={candidate.candidate_id}>
-                      {candidate.name || candidate.candidate_id.substring(0, 8)} ({candidate.years_of_experience || 0} years)
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="form-group">
-                <label>Select Job</label>
-                <select 
-                  value={selectedJob || ''} 
-                  onChange={(e) => setSelectedJob(e.target.value)}
-                >
-                  <option value="">Choose a job...</option>
-                  {jobs.map(job => (
-                    <option key={job.job_id} value={job.job_id}>
-                      {job.job_title} ({job.required_skills_count} skills)
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            
-            <button 
-              onClick={handleMatchCandidate} 
-              disabled={!selectedCandidate || !selectedJob || loading}
-              className="btn-primary"
-            >
-              {loading ? 'Matching...' : '🔍 Match Candidate'}
-            </button>
-            
-            {/* Quick Match Section */}
-            <hr className="divider" />
-            <h3>⚡ Quick Match with Skills Text</h3>
-            <div className="quick-match-buttons">
-              <button onClick={() => handleQuickMatch('Python, SQL, Machine Learning')}>
-                Python/SQL/ML
-              </button>
-              <button onClick={() => handleQuickMatch('JavaScript, React, Node.js')}>
-                Full Stack
-              </button>
-              <button onClick={() => handleQuickMatch('AWS, Docker, Kubernetes')}>
-                DevOps
-              </button>
-              <button onClick={() => handleQuickMatch('Java, Spring Boot, Microservices')}>
-                Java Backend
-              </button>
-            </div>
-          </div>
-          
-          {/* Match Results */}
-          {matchResults && (
-            <div className="card results">
-              <h2>📊 Match Results</h2>
-              
-              <div className="score-card">
-                <div className="score-circle">
-                  <div className="score-number">{matchResults.match_score}</div>
-                  <div className="score-label">Match Score</div>
-                </div>
-                <div className="verdict">{matchResults.verdict}</div>
-              </div>
-              
-              <div className="match-details">
-                <div className="detail-section">
-                  <h3>✅ Matched Skills</h3>
-                  <div className="skills-list">
-                    {matchResults.matched_skills.map((skill, idx) => (
-                      <span key={idx} className="skill-tag matched">{skill}</span>
+                )}
+
+                {/* All jobs list */}
+                {jobs.length > 1 && (
+                  <div className="jobs-list">
+                    <p className="jobs-list__heading">All Postings ({jobs.length})</p>
+                    {jobs.map((j) => (
+                      <div key={j.job_id} className="job-row">
+                        <div className="job-row__info">
+                          <span className="job-row__title">{j.title}</span>
+                          <span className="job-row__meta">
+                            {j.required_skills?.length || 0} required skills ·{' '}
+                            {new Date(j.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <span className="badge badge--subtle">{j.job_id.slice(0, 8)}</span>
+                      </div>
                     ))}
-                  </div>
-                </div>
-                
-                <div className="detail-section">
-                  <h3>❌ Missing Skills</h3>
-                  <div className="skills-list">
-                    {matchResults.missing_skills.map((skill, idx) => (
-                      <span key={idx} className="skill-tag missing">{skill}</span>
-                    ))}
-                  </div>
-                </div>
-                
-                <div className="detail-section">
-                  <h3>💼 Experience Match</h3>
-                  <p>{matchResults.experience_match}</p>
-                </div>
-                
-                <div className="detail-section">
-                  <h3>💡 Recommendation</h3>
-                  <p className="recommendation">{matchResults.recommendation}</p>
-                </div>
-                
-                <div className="detail-section">
-                  <h3>📝 Gap Analysis</h3>
-                  <p>{matchResults.gap_analysis}</p>
-                </div>
-                
-                {matchResults.upskilling_suggestions && (
-                  <div className="detail-section">
-                    <h3>📚 Upskilling Suggestions</h3>
-                    <ul>
-                      {matchResults.upskilling_suggestions.map((suggestion, idx) => (
-                        <li key={idx}>{suggestion}</li>
-                      ))}
-                    </ul>
                   </div>
                 )}
               </div>
             </div>
-          )}
-        </div>
-      )}
-      
+          </div>
+        )}
+
+        {/* ── RESUME TAB ─────────────────────────────────────────────────────── */}
+        {tab === 'resume' && (
+          <div className="tab-view">
+            <div className="tab-view__split">
+              {/* Upload panel */}
+              <div className="panel">
+                <div className="panel__head">
+                  <h2 className="panel__title">Upload Resume</h2>
+                  <p className="panel__sub">PDF, DOCX, or TXT — multi-column layouts supported.</p>
+                </div>
+
+                <div
+                  className={`dropzone${dragOver ? ' dropzone--over' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleFileDrop}
+                  onClick={() => document.getElementById('resume-input').click()}
+                >
+                  <input
+                    id="resume-input"
+                    type="file"
+                    accept=".pdf,.docx,.txt"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files[0];
+                      if (f) { setUploadFile(f); handleUpload(f); }
+                      e.target.value = '';
+                    }}
+                  />
+                  <div className="dropzone__icon">
+                    <svg viewBox="0 0 48 48" fill="none">
+                      <path d="M24 32V16M24 16l-6 6M24 16l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M8 36c0 2.2 1.8 4 4 4h24c2.2 0 4-1.8 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                  {uploadFile ? (
+                    <p className="dropzone__filename">{uploadFile.name}</p>
+                  ) : (
+                    <>
+                      <p className="dropzone__label">Drop a file here, or click to browse</p>
+                      <p className="dropzone__hint">PDF · DOCX · TXT</p>
+                    </>
+                  )}
+                </div>
+
+                {uploadProgress > 0 && uploadProgress < 100 && (
+                  <div className="progress">
+                    <div className="progress__bar" style={{ width: `${uploadProgress}%` }} />
+                    <span className="progress__pct">{uploadProgress}%</span>
+                  </div>
+                )}
+
+                {loading && (
+                  <p className="loading-msg">
+                    <span className="btn__spinner" style={{ display: 'inline-block', marginRight: 8 }} />
+                    {loadingMsg}
+                  </p>
+                )}
+              </div>
+
+              {/* Parsed candidate panel */}
+              <div className="panel">
+                {parsedCandidate ? (
+                  <>
+                    <div className="panel__head">
+                      <h2 className="panel__title">Parsed Profile</h2>
+                      <span className="badge badge--success">Done</span>
+                    </div>
+
+                    <div className="candidate-hero">
+                      <div className="candidate-avatar">
+                        {(parsedCandidate.name || '?').charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="candidate-hero__name">{parsedCandidate.name || 'Unknown'}</p>
+                        <p className="candidate-hero__meta">
+                          {parsedCandidate.email && <span>{parsedCandidate.email}</span>}
+                          {parsedCandidate.location && <span>{parsedCandidate.location}</span>}
+                          <span>{parsedCandidate.years_of_experience || 0} yrs exp.</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    {parsedCandidate.summary && (
+                      <p className="candidate-summary">{parsedCandidate.summary}</p>
+                    )}
+
+                    {parsedCandidate.skills?.length > 0 && (
+                      <div className="skills-section">
+                        <p className="skills-section__label">Skills ({parsedCandidate.skills.length})</p>
+                        <div className="skills-wrap">
+                          {parsedCandidate.skills.map((s) => (
+                            <SkillTag key={s} label={s} variant="neutral" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {parsedCandidate.experience?.length > 0 && (
+                      <div className="timeline">
+                        <p className="skills-section__label">Experience</p>
+                        {parsedCandidate.experience.map((exp, i) => (
+                          <div key={i} className="timeline-item">
+                            <div className="timeline-item__dot" />
+                            <div>
+                              <p className="timeline-item__role">{exp.role}</p>
+                              <p className="timeline-item__co">{exp.company} · {exp.duration}</p>
+                              {exp.responsibilities?.length > 0 && (
+                                <ul className="timeline-item__resp">
+                                  {exp.responsibilities.slice(0, 3).map((r, j) => (
+                                    <li key={j}>{r}</li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {parsedCandidate.education?.length > 0 && (
+                      <div className="timeline">
+                        <p className="skills-section__label">Education</p>
+                        {parsedCandidate.education.map((ed, i) => (
+                          <div key={i} className="timeline-item">
+                            <div className="timeline-item__dot timeline-item__dot--edu" />
+                            <div>
+                              <p className="timeline-item__role">{ed.degree} in {ed.field}</p>
+                              <p className="timeline-item__co">{ed.institution} · {ed.year}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <p className="candidate-id">Candidate ID: {parsedCandidate.candidate_id}</p>
+                  </>
+                ) : (
+                  <div className="empty-state">
+                    <div className="empty-state__icon">
+                      <svg viewBox="0 0 48 48" fill="none">
+                        <circle cx="24" cy="18" r="8" stroke="currentColor" strokeWidth="2" />
+                        <path d="M8 40c0-8.8 7.2-16 16-16s16 7.2 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                    </div>
+                    <p className="empty-state__title">No resume parsed yet</p>
+                    <p className="empty-state__sub">Upload a file to see the extracted profile here</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Candidates library */}
+            {candidates.length > 0 && (
+              <div className="panel panel--wide">
+                <p className="panel__title" style={{ marginBottom: '1rem' }}>
+                  Candidate Library ({candidates.length})
+                </p>
+                <div className="candidates-grid">
+                  {candidates.map((c) => (
+                    <div key={c.candidate_id} className="cand-card">
+                      <div className="cand-card__avatar">
+                        {(c.name || '?').charAt(0).toUpperCase()}
+                      </div>
+                      <div className="cand-card__info">
+                        <p className="cand-card__name">{c.name || 'Unknown'}</p>
+                        <p className="cand-card__meta">{c.years_of_experience || 0} yrs · {c.skills?.length || 0} skills</p>
+                        <div className="skills-wrap" style={{ marginTop: 6 }}>
+                          {(c.skills || []).slice(0, 4).map((s) => (
+                            <SkillTag key={s} label={s} variant="neutral" />
+                          ))}
+                          {(c.skills?.length || 0) > 4 && (
+                            <span className="skill-tag skill-tag--more">+{c.skills.length - 4}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── MATCH TAB ──────────────────────────────────────────────────────── */}
+        {tab === 'match' && (
+          <div className="tab-view">
+            <div className="tab-view__split">
+              {/* Selectors */}
+              <div className="panel">
+                <div className="panel__head">
+                  <h2 className="panel__title">Match Candidate to Job</h2>
+                  <p className="panel__sub">Semantic skill matching + LLM gap analysis.</p>
+                </div>
+
+                {candidates.length === 0 && (
+                  <div className="callout callout--warn">
+                    No candidates yet. Parse a resume first in the Resume tab.
+                  </div>
+                )}
+                {jobs.length === 0 && (
+                  <div className="callout callout--warn">
+                    No jobs yet. Create a job posting in the Post a Job tab.
+                  </div>
+                )}
+
+                <div className="field">
+                  <label className="field__label">Select Candidate</label>
+                  <select
+                    className="field__select"
+                    value={selCandidate}
+                    onChange={(e) => setSelCandidate(e.target.value)}
+                    disabled={candidates.length === 0}
+                  >
+                    <option value="">Choose a candidate…</option>
+                    {candidates.map((c) => (
+                      <option key={c.candidate_id} value={c.candidate_id}>
+                        {c.name || 'Unknown'} — {c.years_of_experience || 0} yrs · {c.skills?.length || 0} skills
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label className="field__label">Select Job</label>
+                  <select
+                    className="field__select"
+                    value={selJob}
+                    onChange={(e) => setSelJob(e.target.value)}
+                    disabled={jobs.length === 0}
+                  >
+                    <option value="">Choose a job…</option>
+                    {jobs.map((j) => (
+                      <option key={j.job_id} value={j.job_id}>
+                        {j.title} — {j.required_skills?.length || 0} required skills
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  className="btn btn--primary btn--full"
+                  onClick={handleMatch}
+                  disabled={loading || !selCandidate || !selJob}
+                >
+                  {loading ? <span className="btn__spinner" /> : null}
+                  {loading ? 'Matching…' : 'Run Match'}
+                </button>
+
+                {/* Selected previews */}
+                {selCandidate && (
+                  <div className="preview-card">
+                    {(() => {
+                      const c = candidates.find((x) => x.candidate_id === selCandidate);
+                      return c ? (
+                        <>
+                          <p className="preview-card__label">Candidate</p>
+                          <p className="preview-card__value">{c.name || 'Unknown'}</p>
+                          <p className="preview-card__meta">{c.years_of_experience || 0} years · {c.skills?.length || 0} skills</p>
+                        </>
+                      ) : null;
+                    })()}
+                  </div>
+                )}
+                {selJob && (
+                  <div className="preview-card">
+                    {(() => {
+                      const j = jobs.find((x) => x.job_id === selJob);
+                      return j ? (
+                        <>
+                          <p className="preview-card__label">Job</p>
+                          <p className="preview-card__value">{j.title}</p>
+                          <p className="preview-card__meta">{j.required_skills?.length || 0} required · {j.nice_to_have_skills?.length || 0} nice-to-have</p>
+                        </>
+                      ) : null;
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              {/* Match results */}
+              <div className="panel">
+                {matchResult ? (
+                  <>
+                    <div className="panel__head">
+                      <h2 className="panel__title">Match Results</h2>
+                      <span className="badge badge--info">AI Analysis</span>
+                    </div>
+
+                    <ScoreRing score={matchResult.match_score} />
+
+                    <p className="verdict-text">{matchResult.verdict}</p>
+
+                    <div className="match-grid">
+                      <div className="stat-chip">
+                        <span className="stat-chip__num">{Math.round(matchResult.skill_match_details?.required_skills_match || 0)}%</span>
+                        <span className="stat-chip__label">Required Skills</span>
+                      </div>
+                      <div className="stat-chip">
+                        <span className="stat-chip__num">{Math.round(matchResult.skill_match_details?.nice_to_have_match || 0)}%</span>
+                        <span className="stat-chip__label">Nice to Have</span>
+                      </div>
+                      <div className="stat-chip">
+                        <span className="stat-chip__num">{Math.round(matchResult.skill_match_details?.experience_match || 0)}%</span>
+                        <span className="stat-chip__label">Experience</span>
+                      </div>
+                    </div>
+
+                    <div className="result-row">
+                      <p className="result-row__label">Experience</p>
+                      <p className="result-row__val">{matchResult.experience_match}</p>
+                    </div>
+
+                    {matchResult.matched_skills?.length > 0 && (
+                      <div className="skills-section">
+                        <p className="skills-section__label">Matched Skills ({matchResult.matched_skills.length})</p>
+                        <div className="skills-wrap">
+                          {matchResult.matched_skills.map((s) => (
+                            <SkillTag key={s} label={s} variant="matched" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {matchResult.missing_skills?.length > 0 && (
+                      <div className="skills-section">
+                        <p className="skills-section__label">Missing Skills ({matchResult.missing_skills.length})</p>
+                        <div className="skills-wrap">
+                          {matchResult.missing_skills.map((s) => (
+                            <SkillTag key={s} label={s} variant="missing" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {matchResult.nice_to_have_matched?.length > 0 && (
+                      <div className="skills-section">
+                        <p className="skills-section__label">Nice-to-Have Matched</p>
+                        <div className="skills-wrap">
+                          {matchResult.nice_to_have_matched.map((s) => (
+                            <SkillTag key={s} label={s} variant="optional" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {matchResult.recommendation && (
+                      <div className="insight-card insight-card--green">
+                        <p className="insight-card__label">Recommendation</p>
+                        <p className="insight-card__text">{matchResult.recommendation}</p>
+                      </div>
+                    )}
+
+                    {matchResult.gap_analysis && (
+                      <div className="insight-card">
+                        <p className="insight-card__label">Gap Analysis</p>
+                        <p className="insight-card__text">{matchResult.gap_analysis}</p>
+                      </div>
+                    )}
+
+                    {matchResult.upskilling_suggestions?.length > 0 && (
+                      <div className="insight-card insight-card--amber">
+                        <p className="insight-card__label">Upskilling Suggestions</p>
+                        <ul className="insight-list">
+                          {matchResult.upskilling_suggestions.map((s, i) => (
+                            <li key={i}>{s}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="empty-state">
+                    <div className="empty-state__icon">
+                      <svg viewBox="0 0 48 48" fill="none">
+                        <circle cx="18" cy="24" r="10" stroke="currentColor" strokeWidth="2" />
+                        <circle cx="30" cy="24" r="10" stroke="currentColor" strokeWidth="2" />
+                      </svg>
+                    </div>
+                    <p className="empty-state__title">No match run yet</p>
+                    <p className="empty-state__sub">Select a candidate and a job, then click "Run Match"</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Loading overlay */}
       {loading && (
-        <div className="loading-overlay">
-          <div className="spinner"></div>
-          <p>Processing...</p>
+        <div className="loading-overlay" aria-live="polite">
+          <div className="loading-box">
+            <div className="loading-spinner" />
+            <p className="loading-box__msg">{loadingMsg}</p>
+          </div>
         </div>
       )}
     </div>
   );
 }
-
-export default App;
