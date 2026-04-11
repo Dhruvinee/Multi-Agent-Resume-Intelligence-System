@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from agents.normalizer_agent import normalize_skills
 
+from langchain_groq import ChatGroq
+
 load_dotenv()
 
 
@@ -18,11 +20,11 @@ class JobDescriptionAgent:
     4. Returns a structured job profile ready to be stored and matched against
     """
 
-    def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
-            temperature=0
+    def __init__(self, model: str = "llama-3.3-70b-versatile"):
+        self.llm = ChatGroq(
+            model=model,
+            api_key=os.getenv("GROQ_API_KEY"),
+            temperature=0,
         )
 
     def extract_skills_from_description(self, description: str) -> Dict:

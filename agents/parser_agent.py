@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
 from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 
 
 from dotenv import load_dotenv
@@ -282,12 +283,11 @@ def _ensure_schema(data: dict) -> dict:
 # ─────────────────────────────────────────────
 
 class ResumeParser:
-    def __init__(self, model: str = "llama-3.3-70b-versatile", temperature: float = 0):
-        self.llm = ChatOpenAI(
+    def __init__(self, model: str = "llama-3.3-70b-versatile"):
+        self.llm = ChatGroq(
             model=model,
             api_key=os.getenv("GROQ_API_KEY"),
-            base_url="https://api.groq.com/openai/v1",  # Groq endpoint
-            temperature=temperature,
+            temperature=0,
         )
 
     def parse_resume(self, file_path: str | Path) -> dict:
